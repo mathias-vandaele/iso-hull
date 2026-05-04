@@ -1,6 +1,6 @@
 # IsoHull
 
-IsoHull reconstructs solid `MultiPolygon` shapes from 2D point clouds that represent isochrone-like reachable areas.
+IsoHull builds solid alpha-shape polygons from 2D point clouds or latitude/longitude samples.
 
 ```rust
 use isohull::{IsoHull, Point2};
@@ -13,17 +13,29 @@ let points = vec![
 ];
 
 let multipolygon = IsoHull::from_xy(points)
-    .auto_scale()
-    .remove_bridges()
+    .auto_alpha()
     .min_area_ratio(0.005)
     .build()?;
 # Ok::<(), isohull::IsoHullError>(())
 ```
 
-IsoHull has three user decisions:
+The builder is intentionally step-by-step:
 
-1. Scale: use `auto_scale()` or provide `manual_scale().alpha_radius(...).max_edge_length(...)`.
-2. Connectivity: use `remove_bridges()` or `no_bridge_removal()`.
-3. Area filtering: use `min_area_ratio(...)` or `no_area_filter()`.
+1. Input: `IsoHull::from_xy(...)` or `IsoHull::from_lat_lon(...)`.
+2. Alpha: `.auto_alpha()` or `.alpha(radius)`.
+3. Area filtering: `.min_area_ratio(ratio)` or `.all_area()`.
+4. Output: `.build()`.
 
-IsoHull produces solid polygons only. Holes are intentionally not represented in this first version.
+`min_area_ratio` only applies when multiple polygons are returned. It keeps polygons whose area is at least `ratio * largest_polygon_area`.
+
+The lower-level helpers remain available:
+
+- `alpha_shape(points, alpha_radius)`
+- `alpha_shape_auto(points)`
+- `estimate_alpha_radius(points)`
+
+Benchmark the example datasets with:
+
+```sh
+cargo bench --bench examples
+```

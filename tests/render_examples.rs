@@ -4,10 +4,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use isohull::{alpha_shape_auto, MultiPolygon, Point2};
+use isohull::{IsoHull, LatLon, MultiPolygon, Point2};
 use serde::Deserialize;
 
-const EARTH_RADIUS_METERS: f64 = 6_371_000.0;
 const SVG_WIDTH: f64 = 1200.0;
 const SVG_HEIGHT: f64 = 1200.0;
 const SVG_PADDING: f64 = 36.0;
@@ -35,9 +34,16 @@ fn render_example_alpha_shapes_to_svg() -> Result<(), Box<dyn Error>> {
         let example = read_example(&path)?;
         assert_eq!(example.point_count, example.points.len());
 
-        let points = project_to_local_meters(&example.points);
-        let shape = alpha_shape_auto(points.clone())?;
-        let svg = render_svg(&shape, &points);
+        let shape = IsoHull::from_lat_lon(
+            example
+                .points
+                .iter()
+                .map(|point| LatLon::new(point.lat, point.lon)),
+        )
+        .auto_alpha()
+        .min_area_ratio(0.005)
+        .build()?;
+        let svg = render_svg(&shape);
 
         fs::write(output_dir.join(format!("{}.svg", file_stem(&path)?)), svg)?;
     }
@@ -61,26 +67,8 @@ fn read_example(path: &Path) -> Result<Example, Box<dyn Error>> {
     Ok(serde_json::from_str(&contents)?)
 }
 
-fn project_to_local_meters(points: &[GeoPoint]) -> Vec<Point2> {
-    let origin = points
-        .first()
-        .copied()
-        .unwrap_or(GeoPoint { lat: 0.0, lon: 0.0 });
-    let mean_lat = points.iter().map(|point| point.lat).sum::<f64>() / points.len() as f64;
-    let lon_scale = mean_lat.to_radians().cos();
-
-    points
-        .iter()
-        .map(|point| {
-            let x = (point.lon - origin.lon).to_radians() * EARTH_RADIUS_METERS * lon_scale;
-            let y = (point.lat - origin.lat).to_radians() * EARTH_RADIUS_METERS;
-            Point2::new(x, y)
-        })
-        .collect()
-}
-
-fn render_svg(shape: &MultiPolygon, source_points: &[Point2]) -> String {
-    let bounds = Bounds::from_points(source_points);
+fn render_svg(shape: &MultiPolygon) -> String {
+    let bounds = Bounds::from_shape(shape);
     let projector = SvgProjector::new(bounds);
     let paths = shape
         .polygons
@@ -130,21 +118,25 @@ struct Bounds {
 }
 
 impl Bounds {
-    fn from_points(points: &[Point2]) -> Self {
-        points.iter().fold(
-            Self {
-                min_x: f64::INFINITY,
-                min_y: f64::INFINITY,
-                max_x: f64::NEG_INFINITY,
-                max_y: f64::NEG_INFINITY,
-            },
-            |bounds, point| Self {
-                min_x: bounds.min_x.min(point.x),
-                min_y: bounds.min_y.min(point.y),
-                max_x: bounds.max_x.max(point.x),
-                max_y: bounds.max_y.max(point.y),
-            },
-        )
+    fn from_shape(shape: &MultiPolygon) -> Self {
+        shape
+            .polygons
+            .iter()
+            .flat_map(|polygon| polygon.outer.iter())
+            .fold(
+                Self {
+                    min_x: f64::INFINITY,
+                    min_y: f64::INFINITY,
+                    max_x: f64::NEG_INFINITY,
+                    max_y: f64::NEG_INFINITY,
+                },
+                |bounds, point| Self {
+                    min_x: bounds.min_x.min(point.x),
+                    min_y: bounds.min_y.min(point.y),
+                    max_x: bounds.max_x.max(point.x),
+                    max_y: bounds.max_y.max(point.y),
+                },
+            )
     }
 
     fn width(self) -> f64 {
