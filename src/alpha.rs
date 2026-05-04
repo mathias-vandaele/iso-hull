@@ -1,6 +1,6 @@
 use crate::{
     error::AlphaShapeError,
-    geometry::{circumradius, percentile_sorted, total_area},
+    geometry::{circumradius, percentile_sorted},
     mesh::Triangle,
     polygonize::polygons_from_triangles,
     preprocess::prepare_points,
@@ -77,41 +77,13 @@ pub(crate) fn estimate_alpha_radius_from_triangles(
 
     radii.sort_by(f64::total_cmp);
 
-    let reference_alpha = percentile_sorted(&radii, 0.995).unwrap_or(radii[radii.len() - 1]);
-    let reference_shape = build_alpha_shape(points, triangles, reference_alpha)
-        .or_else(|_| build_alpha_shape(points, triangles, radii[radii.len() - 1]))?;
-    let reference_area = total_area(&reference_shape);
-    let target_polygon_count = reference_shape.polygons.len().max(1);
-
-    let candidate_percentiles = [
-        0.50, 0.60, 0.70, 0.80, 0.85, 0.90, 0.93, 0.95, 0.97, 0.98, 0.99, 0.995,
-    ];
-
-    let mut last_alpha = None;
-    for percentile in candidate_percentiles {
-        let Some(alpha) = percentile_sorted(&radii, percentile) else {
-            continue;
-        };
-
-        if last_alpha == Some(alpha) {
-            continue;
-        }
-        last_alpha = Some(alpha);
-
-        let Ok(shape) = build_alpha_shape(points, triangles, alpha) else {
-            continue;
-        };
-
-        if shape.polygons.len() <= target_polygon_count
-            && total_area(&shape) >= reference_area * 0.85
-        {
-            return Ok(alpha);
-        }
-    }
-
-    Ok(reference_alpha)
+    Ok(estimate_alpha_radius_from_sorted_radii(&radii))
 }
 
 pub(crate) fn triangle_circumradius(triangle: Triangle, points: &[Point2]) -> Option<f64> {
     circumradius(points[triangle.a], points[triangle.b], points[triangle.c])
+}
+
+fn estimate_alpha_radius_from_sorted_radii(radii: &[f64]) -> f64 {
+    percentile_sorted(radii, 0.995).unwrap_or(radii[radii.len() - 1])
 }

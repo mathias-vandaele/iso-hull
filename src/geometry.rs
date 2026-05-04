@@ -1,4 +1,4 @@
-use crate::types::{MultiPolygon, Point2};
+use crate::types::Point2;
 
 pub(crate) const AREA_EPSILON: f64 = 1.0e-12;
 
@@ -65,14 +65,6 @@ pub(crate) fn signed_area(points: &[Point2]) -> f64 {
     }
 
     area * 0.5
-}
-
-pub(crate) fn total_area(shape: &MultiPolygon) -> f64 {
-    shape
-        .polygons
-        .iter()
-        .map(|polygon| signed_area(&polygon.outer).abs())
-        .sum()
 }
 
 pub(crate) fn compare_points(a: Point2, b: Point2) -> std::cmp::Ordering {
