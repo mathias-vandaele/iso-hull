@@ -27,4 +27,3 @@ IsoHull has three user decisions:
 3. Area filtering: use `min_area_ratio(...)` or `no_area_filter()`.
 
 IsoHull produces solid polygons only. Holes are intentionally not represented in this first version.
-# iso-hull
