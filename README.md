@@ -39,3 +39,15 @@ Benchmark the example datasets with:
 ```sh
 cargo bench --bench examples
 ```
+
+Inspect trace timings for every build step with:
+
+```sh
+RUST_LOG=isohull=trace cargo run --release --example trace_examples
+```
+
+The example defaults to `RUST_LOG=isohull=trace` when `RUST_LOG` is unset. Override it when needed:
+
+```sh
+RUST_LOG=isohull::triangulation=trace cargo run --release --example trace_examples
+```

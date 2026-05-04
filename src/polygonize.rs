@@ -1,4 +1,9 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::{
+    collections::{HashMap, HashSet, VecDeque},
+    time::Instant,
+};
+
+use log::trace;
 
 use crate::{
     geometry::{close_ring, compare_points, ensure_counterclockwise, is_valid_ring, signed_area},
@@ -7,10 +12,39 @@ use crate::{
 };
 
 pub(crate) fn polygons_from_triangles(triangles: &[Triangle], points: &[Point2]) -> Vec<Polygon> {
-    triangle_components(triangles)
+    let total_started = Instant::now();
+
+    let started = Instant::now();
+    let components = triangle_components(triangles);
+    trace!(
+        target: "isohull::polygonize",
+        "triangle_components input_triangles={} components={} elapsed_ms={:.3}",
+        triangles.len(),
+        components.len(),
+        started.elapsed().as_secs_f64() * 1000.0
+    );
+
+    let started = Instant::now();
+    let polygons = components
         .into_iter()
         .filter_map(|component| polygon_from_component(&component, points))
-        .collect()
+        .collect::<Vec<_>>();
+    trace!(
+        target: "isohull::polygonize",
+        "components_to_polygons polygons={} elapsed_ms={:.3}",
+        polygons.len(),
+        started.elapsed().as_secs_f64() * 1000.0
+    );
+
+    trace!(
+        target: "isohull::polygonize",
+        "polygons_from_triangles.total input_triangles={} polygons={} elapsed_ms={:.3}",
+        triangles.len(),
+        polygons.len(),
+        total_started.elapsed().as_secs_f64() * 1000.0
+    );
+
+    polygons
 }
 
 fn triangle_components(triangles: &[Triangle]) -> Vec<Vec<Triangle>> {
