@@ -1,13 +1,11 @@
-use std::{
-    collections::{HashMap, HashSet, VecDeque},
-    time::Instant,
-};
+use std::time::Instant;
 
 use log::trace;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
-    geometry::{close_ring, compare_points, ensure_counterclockwise, is_valid_ring, signed_area},
-    mesh::{Edge, Triangle},
+    geometry::{close_ring, ensure_counterclockwise, is_valid_ring, signed_area, AREA_EPSILON},
+    mesh::Triangle,
     types::{Point2, Polygon},
 };
 
@@ -15,23 +13,30 @@ pub(crate) fn polygons_from_triangles(triangles: &[Triangle], points: &[Point2])
     let total_started = Instant::now();
 
     let started = Instant::now();
-    let components = triangle_components(triangles);
+    let boundary_edges = boundary_edge_keys(triangles);
     trace!(
         target: "isohull::polygonize",
-        "triangle_components input_triangles={} components={} elapsed_ms={:.3}",
+        "boundary_edges input_triangles={} boundary_edges={} elapsed_ms={:.3}",
         triangles.len(),
-        components.len(),
+        boundary_edges.len(),
         started.elapsed().as_secs_f64() * 1000.0
     );
 
     let started = Instant::now();
-    let polygons = components
-        .into_iter()
-        .filter_map(|component| polygon_from_component(&component, points))
-        .collect::<Vec<_>>();
+    let rings = extract_rings(&boundary_edges, points);
     trace!(
         target: "isohull::polygonize",
-        "components_to_polygons polygons={} elapsed_ms={:.3}",
+        "extract_rings boundary_edges={} rings={} elapsed_ms={:.3}",
+        boundary_edges.len(),
+        rings.len(),
+        started.elapsed().as_secs_f64() * 1000.0
+    );
+
+    let started = Instant::now();
+    let polygons = rings_to_polygons(rings);
+    trace!(
+        target: "isohull::polygonize",
+        "rings_to_polygons polygons={} elapsed_ms={:.3}",
         polygons.len(),
         started.elapsed().as_secs_f64() * 1000.0
     );
@@ -47,205 +52,150 @@ pub(crate) fn polygons_from_triangles(triangles: &[Triangle], points: &[Point2])
     polygons
 }
 
-fn triangle_components(triangles: &[Triangle]) -> Vec<Vec<Triangle>> {
-    let mut triangles_by_edge: HashMap<Edge, Vec<usize>> = HashMap::new();
-
-    for (index, triangle) in triangles.iter().enumerate() {
-        for edge in triangle.edges() {
-            triangles_by_edge.entry(edge).or_default().push(index);
-        }
-    }
-
-    let mut components = Vec::new();
-    let mut visited = vec![false; triangles.len()];
-
-    for start in 0..triangles.len() {
-        if visited[start] {
-            continue;
-        }
-
-        let mut component = Vec::new();
-        let mut queue = VecDeque::from([start]);
-        visited[start] = true;
-
-        while let Some(index) = queue.pop_front() {
-            let triangle = triangles[index];
-            component.push(triangle);
-
-            for edge in triangle.edges() {
-                if let Some(neighbors) = triangles_by_edge.get(&edge) {
-                    for &neighbor in neighbors {
-                        if !visited[neighbor] {
-                            visited[neighbor] = true;
-                            queue.push_back(neighbor);
-                        }
-                    }
-                }
-            }
-        }
-
-        components.push(component);
-    }
-
-    components
-}
-
-fn polygon_from_component(component: &[Triangle], points: &[Point2]) -> Option<Polygon> {
-    let boundary = boundary_edges(component);
-    let mut largest_ring = extract_rings(&boundary, points)
-        .into_iter()
-        .max_by(|a, b| signed_area(a).abs().total_cmp(&signed_area(b).abs()))?;
-
-    close_ring(&mut largest_ring);
-    ensure_counterclockwise(&mut largest_ring);
-
-    is_valid_ring(&largest_ring).then_some(Polygon {
-        outer: largest_ring,
-    })
-}
-
-fn boundary_edges(triangles: &[Triangle]) -> Vec<Edge> {
-    let mut counts = HashMap::new();
+fn boundary_edge_keys(triangles: &[Triangle]) -> Vec<u64> {
+    let mut counts = FxHashMap::default();
+    counts.reserve(triangles.len().saturating_mul(3));
 
     for triangle in triangles {
-        for edge in triangle.edges() {
-            *counts.entry(edge).or_insert(0usize) += 1;
+        count_edge(&mut counts, triangle.a, triangle.b);
+        count_edge(&mut counts, triangle.b, triangle.c);
+        count_edge(&mut counts, triangle.c, triangle.a);
+    }
+
+    let mut boundary_edges = Vec::with_capacity(counts.len());
+    for (key, count) in counts {
+        if count == 1 {
+            boundary_edges.push(key);
         }
     }
 
-    counts
-        .into_iter()
-        .filter_map(|(edge, count)| (count == 1).then_some(edge))
-        .collect()
+    boundary_edges.sort_unstable();
+    boundary_edges
 }
 
-fn extract_rings(edges: &[Edge], points: &[Point2]) -> Vec<Vec<Point2>> {
-    edge_components(&prune_dangling_edges(edges))
-        .into_iter()
-        .filter_map(|component| simple_cycle_walk(&component, points))
-        .filter(|ring| is_valid_ring(ring))
-        .collect()
+#[inline(always)]
+fn count_edge(counts: &mut FxHashMap<u64, u8>, a: usize, b: usize) {
+    let key = edge_key(a, b);
+    let count = counts.entry(key).or_insert(0);
+    *count = count.saturating_add(1);
 }
 
-fn prune_dangling_edges(edges: &[Edge]) -> Vec<Edge> {
-    let mut active_edges = edges.iter().copied().collect::<HashSet<_>>();
+fn extract_rings(edges: &[u64], points: &[Point2]) -> Vec<Vec<Point2>> {
+    if edges.is_empty() {
+        return Vec::new();
+    }
 
-    loop {
-        let degrees = vertex_degrees(&active_edges);
-        let dangling_vertices = degrees
-            .into_iter()
-            .filter_map(|(vertex, degree)| (degree < 2).then_some(vertex))
-            .collect::<HashSet<_>>();
+    let mut adjacency = boundary_adjacency(edges, points.len());
 
-        if dangling_vertices.is_empty() {
-            break;
+    if is_simple_boundary_graph(&adjacency) {
+        extract_simple_rings(edges, &adjacency, points)
+    } else {
+        sort_neighbors_by_angle(&mut adjacency, points);
+        extract_planar_face_rings(edges, &adjacency, points)
+    }
+}
+
+fn boundary_adjacency(edges: &[u64], point_count: usize) -> Vec<Vec<usize>> {
+    let mut degrees = vec![0usize; point_count];
+
+    for &key in edges {
+        let u = edge_u(key);
+        let v = edge_v(key);
+        degrees[u] += 1;
+        degrees[v] += 1;
+    }
+
+    let mut adjacency = Vec::with_capacity(point_count);
+    for degree in degrees {
+        adjacency.push(Vec::with_capacity(degree));
+    }
+
+    for &key in edges {
+        let u = edge_u(key);
+        let v = edge_v(key);
+        adjacency[u].push(v);
+        adjacency[v].push(u);
+    }
+
+    for neighbors in &mut adjacency {
+        if neighbors.len() > 1 {
+            neighbors.sort_unstable();
+            neighbors.dedup();
         }
+    }
 
-        let before = active_edges.len();
-        active_edges.retain(|edge| {
-            !dangling_vertices.contains(&edge.u) && !dangling_vertices.contains(&edge.v)
-        });
+    adjacency
+}
 
-        if active_edges.len() == before {
-            break;
+fn is_simple_boundary_graph(adjacency: &[Vec<usize>]) -> bool {
+    for neighbors in adjacency {
+        if !neighbors.is_empty() && neighbors.len() != 2 {
+            return false;
         }
     }
 
-    let mut edges = active_edges.into_iter().collect::<Vec<_>>();
-    edges.sort_by_key(|edge| (edge.u, edge.v));
-    edges
+    true
 }
 
-fn vertex_degrees(edges: &HashSet<Edge>) -> HashMap<usize, usize> {
-    let mut degrees = HashMap::new();
+fn extract_simple_rings(
+    edges: &[u64],
+    adjacency: &[Vec<usize>],
+    points: &[Point2],
+) -> Vec<Vec<Point2>> {
+    let mut visited = FxHashSet::default();
+    visited.reserve(edges.len());
 
-    for edge in edges {
-        *degrees.entry(edge.u).or_insert(0) += 1;
-        *degrees.entry(edge.v).or_insert(0) += 1;
-    }
-
-    degrees
-}
-
-fn edge_components(edges: &[Edge]) -> Vec<Vec<Edge>> {
-    let mut edges_by_vertex: HashMap<usize, Vec<usize>> = HashMap::new();
-
-    for (index, edge) in edges.iter().enumerate() {
-        edges_by_vertex.entry(edge.u).or_default().push(index);
-        edges_by_vertex.entry(edge.v).or_default().push(index);
-    }
-
-    let mut components = Vec::new();
-    let mut visited = vec![false; edges.len()];
-
-    for start in 0..edges.len() {
-        if visited[start] {
+    let mut rings = Vec::new();
+    for &key in edges {
+        if visited.contains(&key) {
             continue;
         }
 
-        let mut component = Vec::new();
-        let mut queue = VecDeque::from([start]);
-        visited[start] = true;
-
-        while let Some(index) = queue.pop_front() {
-            let edge = edges[index];
-            component.push(edge);
-
-            for vertex in [edge.u, edge.v] {
-                if let Some(neighbors) = edges_by_vertex.get(&vertex) {
-                    for &neighbor in neighbors {
-                        if !visited[neighbor] {
-                            visited[neighbor] = true;
-                            queue.push_back(neighbor);
-                        }
-                    }
-                }
-            }
+        if let Some(ring) = walk_simple_cycle(key, adjacency, points, edges.len(), &mut visited) {
+            rings.push(ring);
         }
-
-        components.push(component);
     }
 
-    components
+    rings
 }
 
-fn simple_cycle_walk(edges: &[Edge], points: &[Point2]) -> Option<Vec<Point2>> {
-    let mut adjacency: HashMap<usize, Vec<usize>> = HashMap::new();
+fn walk_simple_cycle(
+    start_key: u64,
+    adjacency: &[Vec<usize>],
+    points: &[Point2],
+    max_edges: usize,
+    visited: &mut FxHashSet<u64>,
+) -> Option<Vec<Point2>> {
+    let start = edge_u(start_key);
+    let mut previous = start;
+    let mut current = edge_v(start_key);
+    let mut ring_indices = Vec::with_capacity(64);
+    ring_indices.push(start);
 
-    for edge in edges {
-        adjacency.entry(edge.u).or_default().push(edge.v);
-        adjacency.entry(edge.v).or_default().push(edge.u);
-    }
-
-    for neighbors in adjacency.values_mut() {
-        neighbors.sort_by(|a, b| compare_points(points[*a], points[*b]));
-        neighbors.dedup();
-
-        if neighbors.len() != 2 {
+    for _ in 0..=max_edges {
+        let key = edge_key(previous, current);
+        if !visited.insert(key) {
             return None;
         }
-    }
 
-    let start = adjacency
-        .keys()
-        .copied()
-        .min_by(|a, b| compare_points(points[*a], points[*b]))?;
-    let mut previous = start;
-    let mut current = *adjacency.get(&start)?.first()?;
-    let mut ring_indices = vec![start];
-
-    for _ in 0..=edges.len() {
         ring_indices.push(current);
-
         if current == start {
             break;
         }
 
-        let next = adjacency
-            .get(&current)?
-            .iter()
-            .copied()
-            .find(|&next| next != previous)?;
+        let neighbors = &adjacency[current];
+        if neighbors.len() != 2 {
+            return None;
+        }
+
+        let next = if neighbors[0] == previous {
+            neighbors[1]
+        } else if neighbors[1] == previous {
+            neighbors[0]
+        } else {
+            return None;
+        };
+
         previous = current;
         current = next;
     }
@@ -254,22 +204,215 @@ fn simple_cycle_walk(edges: &[Edge], points: &[Point2]) -> Option<Vec<Point2>> {
         return None;
     }
 
-    if ring_indices.len() != edges.len() + 1 {
+    if ring_indices.len() < 4 {
         return None;
     }
 
-    let unique_vertices = ring_indices[..ring_indices.len() - 1]
-        .iter()
-        .copied()
-        .collect::<HashSet<_>>();
-    if unique_vertices.len() != ring_indices.len() - 1 {
+    let mut ring = Vec::with_capacity(ring_indices.len());
+    for index in ring_indices {
+        ring.push(points[index]);
+    }
+
+    Some(ring)
+}
+
+fn sort_neighbors_by_angle(adjacency: &mut [Vec<usize>], points: &[Point2]) {
+    for vertex in 0..adjacency.len() {
+        if adjacency[vertex].len() <= 1 {
+            continue;
+        }
+
+        adjacency[vertex].sort_unstable_by(|a, b| {
+            angle(points[vertex], points[*a]).total_cmp(&angle(points[vertex], points[*b]))
+        });
+        adjacency[vertex].dedup();
+    }
+}
+
+fn extract_planar_face_rings(
+    edges: &[u64],
+    adjacency: &[Vec<usize>],
+    points: &[Point2],
+) -> Vec<Vec<Point2>> {
+    let mut visited = FxHashSet::default();
+    visited.reserve(edges.len().saturating_mul(2));
+
+    let mut rings = Vec::new();
+    for &key in edges {
+        let u = edge_u(key);
+        let v = edge_v(key);
+
+        if let Some(ring) = walk_planar_face(u, v, adjacency, points, edges.len(), &mut visited) {
+            rings.push(ring);
+        }
+        if let Some(ring) = walk_planar_face(v, u, adjacency, points, edges.len(), &mut visited) {
+            rings.push(ring);
+        }
+    }
+
+    rings
+}
+
+fn walk_planar_face(
+    start_from: usize,
+    start_to: usize,
+    adjacency: &[Vec<usize>],
+    points: &[Point2],
+    max_edges: usize,
+    visited: &mut FxHashSet<u64>,
+) -> Option<Vec<Point2>> {
+    if visited.contains(&directed_edge_key(start_from, start_to)) {
         return None;
     }
 
-    Some(
-        ring_indices
-            .into_iter()
-            .map(|index| points[index])
-            .collect(),
-    )
+    let mut from = start_from;
+    let mut to = start_to;
+    let mut ring_indices = Vec::with_capacity(64);
+
+    for _ in 0..=max_edges {
+        if !visited.insert(directed_edge_key(from, to)) {
+            return None;
+        }
+
+        ring_indices.push(from);
+
+        let neighbors = &adjacency[to];
+        let incoming = neighbors.iter().position(|&neighbor| neighbor == from)?;
+        let next = neighbors[(incoming + neighbors.len() - 1) % neighbors.len()];
+
+        from = to;
+        to = next;
+
+        if from == start_from && to == start_to {
+            break;
+        }
+    }
+
+    if from != start_from || to != start_to {
+        return None;
+    }
+
+    ring_indices.push(start_from);
+
+    let mut ring = Vec::with_capacity(ring_indices.len());
+    for index in ring_indices {
+        ring.push(points[index]);
+    }
+
+    if signed_area(&ring) > AREA_EPSILON {
+        Some(ring)
+    } else {
+        None
+    }
+}
+
+fn rings_to_polygons(rings: Vec<Vec<Point2>>) -> Vec<Polygon> {
+    let mut rings = valid_ring_candidates(rings);
+    rings.sort_by(|a, b| b.abs_area.total_cmp(&a.abs_area));
+
+    let mut keep = Vec::with_capacity(rings.len());
+    for index in 0..rings.len() {
+        keep.push(containment_depth(index, &rings) % 2 == 0);
+    }
+
+    let mut polygons = Vec::with_capacity(rings.len());
+    for (candidate, keep) in rings.into_iter().zip(keep) {
+        if keep {
+            polygons.push(Polygon {
+                outer: candidate.points,
+            });
+        }
+    }
+
+    polygons
+}
+
+fn valid_ring_candidates(rings: Vec<Vec<Point2>>) -> Vec<RingCandidate> {
+    let mut candidates = Vec::with_capacity(rings.len());
+
+    for mut points in rings {
+        close_ring(&mut points);
+
+        if !is_valid_ring(&points) {
+            continue;
+        }
+
+        let abs_area = signed_area(&points).abs();
+        ensure_counterclockwise(&mut points);
+
+        candidates.push(RingCandidate { points, abs_area });
+    }
+
+    candidates
+}
+
+fn containment_depth(index: usize, rings: &[RingCandidate]) -> usize {
+    let point = rings[index].points[0];
+    let mut depth = 0;
+
+    for candidate in &rings[..index] {
+        if point_in_ring(point, &candidate.points) {
+            depth += 1;
+        }
+    }
+
+    depth
+}
+
+fn point_in_ring(point: Point2, ring: &[Point2]) -> bool {
+    let mut inside = false;
+
+    for index in 0..ring.len() - 1 {
+        let a = ring[index];
+        let b = ring[index + 1];
+        let crosses = (a.y > point.y) != (b.y > point.y);
+
+        if crosses {
+            let x = (b.x - a.x) * (point.y - a.y) / (b.y - a.y) + a.x;
+            if point.x < x {
+                inside = !inside;
+            }
+        }
+    }
+
+    inside
+}
+
+#[derive(Debug)]
+struct RingCandidate {
+    points: Vec<Point2>,
+    abs_area: f64,
+}
+
+#[inline(always)]
+fn edge_key(a: usize, b: usize) -> u64 {
+    debug_assert!(a <= u32::MAX as usize);
+    debug_assert!(b <= u32::MAX as usize);
+
+    let lo = a.min(b) as u64;
+    let hi = a.max(b) as u64;
+    (lo << 32) | hi
+}
+
+#[inline(always)]
+fn directed_edge_key(from: usize, to: usize) -> u64 {
+    debug_assert!(from <= u32::MAX as usize);
+    debug_assert!(to <= u32::MAX as usize);
+
+    ((from as u64) << 32) | to as u64
+}
+
+#[inline(always)]
+fn edge_u(key: u64) -> usize {
+    (key >> 32) as usize
+}
+
+#[inline(always)]
+fn edge_v(key: u64) -> usize {
+    (key & 0xffff_ffff) as usize
+}
+
+#[inline(always)]
+fn angle(origin: Point2, point: Point2) -> f64 {
+    (point.y - origin.y).atan2(point.x - origin.x)
 }

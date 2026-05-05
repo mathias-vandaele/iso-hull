@@ -9,7 +9,9 @@ mod triangulation;
 mod types;
 
 pub use alpha::{alpha_shape, alpha_shape_auto, estimate_alpha_radius};
-pub use builder::{IsoHull, IsoHullAreaBuilder, IsoHullBuildBuilder, IsoHullInputBuilder};
+pub use builder::{
+    HullMode, IsoHull, IsoHullAreaBuilder, IsoHullBuildBuilder, IsoHullInputBuilder,
+};
 pub use error::{AlphaShapeError, IsoHullError};
 pub use types::{LatLon, MultiPolygon, Point2, Polygon};
 
@@ -60,6 +62,25 @@ mod tests {
         ];
 
         let shape = IsoHull::from_xy(points)
+            .auto_alpha()
+            .all_area()
+            .build()
+            .unwrap();
+
+        assert_eq!(shape.polygons.len(), 1);
+    }
+
+    #[test]
+    fn builder_subsample_mode_is_opt_in() {
+        let mut points = Vec::new();
+        for y in 0..100 {
+            for x in 0..100 {
+                points.push(Point2::new(x as f64, y as f64));
+            }
+        }
+
+        let shape = IsoHull::from_xy(points)
+            .mode(HullMode::Subsample { max_points: 10_000 })
             .auto_alpha()
             .all_area()
             .build()

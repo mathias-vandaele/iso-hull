@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 log = "0.4"
+rustc-hash = "2"
 spade = "2"
 
 [dev-dependencies]

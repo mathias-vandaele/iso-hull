@@ -6,24 +6,39 @@ use crate::{
     alpha::{build_alpha_shape, estimate_alpha_radius_from_triangles},
     error::IsoHullError,
     geometry::signed_area,
-    preprocess::{prepare_points, project_lat_lon},
+    preprocess::{prepare_points, project_lat_lon, spatial_subsample, validate_points},
     triangulation::delaunay_triangles,
     types::{LatLon, MultiPolygon, Point2, Polygon},
 };
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HullMode {
+    Exact,
+    Subsample { max_points: usize },
+}
+
+impl Default for HullMode {
+    fn default() -> Self {
+        Self::Exact
+    }
+}
 
 pub struct IsoHull;
 
 pub struct IsoHullInputBuilder {
     points: Vec<Point2>,
+    mode: HullMode,
 }
 
 pub struct IsoHullAreaBuilder {
     points: Vec<Point2>,
+    mode: HullMode,
     alpha: AlphaSelection,
 }
 
 pub struct IsoHullBuildBuilder {
     points: Vec<Point2>,
+    mode: HullMode,
     alpha: AlphaSelection,
     area_filter: AreaFilter,
 }
@@ -49,6 +64,7 @@ impl IsoHull {
         let started = Instant::now();
         IsoHullInputBuilder {
             points: points.into_iter().map(Into::into).collect(),
+            mode: HullMode::Exact,
         }
         .tap_trace_from_xy(started)
     }
@@ -62,6 +78,7 @@ impl IsoHull {
         let points = points.into_iter().map(Into::into).collect::<Vec<_>>();
         IsoHullInputBuilder {
             points: project_lat_lon(&points),
+            mode: HullMode::Exact,
         }
         .tap_trace_from_lat_lon(started, points.len())
     }
@@ -91,9 +108,14 @@ impl IsoHullInputBuilder {
 }
 
 impl IsoHullInputBuilder {
+    pub fn mode(self, mode: HullMode) -> Self {
+        Self { mode, ..self }
+    }
+
     pub fn auto_alpha(self) -> IsoHullAreaBuilder {
         IsoHullAreaBuilder {
             points: self.points,
+            mode: self.mode,
             alpha: AlphaSelection::Auto,
         }
     }
@@ -101,6 +123,7 @@ impl IsoHullInputBuilder {
     pub fn alpha(self, alpha_radius: f64) -> IsoHullAreaBuilder {
         IsoHullAreaBuilder {
             points: self.points,
+            mode: self.mode,
             alpha: AlphaSelection::Manual(alpha_radius),
         }
     }
@@ -110,6 +133,7 @@ impl IsoHullAreaBuilder {
     pub fn min_area_ratio(self, ratio: f64) -> IsoHullBuildBuilder {
         IsoHullBuildBuilder {
             points: self.points,
+            mode: self.mode,
             alpha: self.alpha,
             area_filter: AreaFilter::MinRatio(ratio),
         }
@@ -118,6 +142,7 @@ impl IsoHullAreaBuilder {
     pub fn all_area(self) -> IsoHullBuildBuilder {
         IsoHullBuildBuilder {
             points: self.points,
+            mode: self.mode,
             alpha: self.alpha,
             area_filter: AreaFilter::All,
         }
@@ -137,7 +162,7 @@ impl IsoHullBuildBuilder {
         );
 
         let started = Instant::now();
-        let points = prepare_points(self.points)?;
+        let points = prepare_build_points(self.points, self.mode)?;
         trace!(
             target: "isohull::builder",
             "prepare_points points={} elapsed_ms={:.3}",
@@ -204,6 +229,16 @@ impl IsoHullBuildBuilder {
         );
 
         Ok(shape)
+    }
+}
+
+fn prepare_build_points(points: Vec<Point2>, mode: HullMode) -> Result<Vec<Point2>, IsoHullError> {
+    match mode {
+        HullMode::Exact => prepare_points(points),
+        HullMode::Subsample { max_points } => {
+            validate_points(&points)?;
+            prepare_points(spatial_subsample(&points, max_points))
+        }
     }
 }
 

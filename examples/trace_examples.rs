@@ -1,10 +1,11 @@
 use std::{
+    env,
     error::Error,
     fs,
     path::{Path, PathBuf},
 };
 
-use isohull::{IsoHull, LatLon};
+use isohull::{HullMode, IsoHull, LatLon};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -23,6 +24,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     init_logger();
 
     let input_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("data/examples");
+    let subsample_max_points = subsample_max_points()?;
 
     for path in json_files(&input_dir)? {
         let example = read_example(&path)?;
@@ -35,15 +37,19 @@ fn main() -> Result<(), Box<dyn Error>> {
             example.points.len()
         );
 
-        let shape = IsoHull::from_lat_lon(
+        let builder = IsoHull::from_lat_lon(
             example
                 .points
                 .iter()
                 .map(|point| LatLon::new(point.lat, point.lon)),
-        )
-        .auto_alpha()
-        .min_area_ratio(0.005)
-        .build()?;
+        );
+        let builder = if let Some(max_points) = subsample_max_points {
+            builder.mode(HullMode::Subsample { max_points })
+        } else {
+            builder
+        };
+
+        let shape = builder.auto_alpha().min_area_ratio(0.005).build()?;
 
         log::info!(
             target: "isohull::example",
@@ -54,6 +60,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     Ok(())
+}
+
+fn subsample_max_points() -> Result<Option<usize>, Box<dyn Error>> {
+    let Ok(value) = env::var("ISOHULL_SUBSAMPLE_MAX_POINTS") else {
+        return Ok(None);
+    };
+
+    Ok(Some(value.parse()?))
 }
 
 fn init_logger() {

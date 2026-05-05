@@ -24,9 +24,9 @@ struct GeoPoint {
 }
 
 #[test]
-fn render_example_alpha_shapes_to_svg() -> Result<(), Box<dyn Error>> {
+fn render_example_alpha_shapes_to_svg_exact() -> Result<(), Box<dyn Error>> {
     let input_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("data/examples");
-    let output_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/isohull/examples");
+    let output_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/isohull/examples/exact");
 
     fs::create_dir_all(&output_dir)?;
 
@@ -40,6 +40,93 @@ fn render_example_alpha_shapes_to_svg() -> Result<(), Box<dyn Error>> {
                 .iter()
                 .map(|point| LatLon::new(point.lat, point.lon)),
         )
+        .auto_alpha()
+        .min_area_ratio(0.005)
+        .build()?;
+        let svg = render_svg(&shape);
+
+        fs::write(output_dir.join(format!("{}.svg", file_stem(&path)?)), svg)?;
+    }
+
+    Ok(())
+}
+
+#[test]
+fn render_example_alpha_shapes_to_svg_10_000() -> Result<(), Box<dyn Error>> {
+    let input_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("data/examples");
+    let output_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/isohull/examples/10_000");
+
+    fs::create_dir_all(&output_dir)?;
+
+    for path in json_files(&input_dir)? {
+        let example = read_example(&path)?;
+        assert_eq!(example.point_count, example.points.len());
+
+        let shape = IsoHull::from_lat_lon(
+            example
+                .points
+                .iter()
+                .map(|point| LatLon::new(point.lat, point.lon)),
+        )
+        .mode(isohull::HullMode::Subsample { max_points: 10000 })
+        .auto_alpha()
+        .min_area_ratio(0.005)
+        .build()?;
+        let svg = render_svg(&shape);
+
+        fs::write(output_dir.join(format!("{}.svg", file_stem(&path)?)), svg)?;
+    }
+
+    Ok(())
+}
+
+#[test]
+fn render_example_alpha_shapes_to_svg_50_000() -> Result<(), Box<dyn Error>> {
+    let input_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("data/examples");
+    let output_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/isohull/examples/50_000");
+
+    fs::create_dir_all(&output_dir)?;
+
+    for path in json_files(&input_dir)? {
+        let example = read_example(&path)?;
+        assert_eq!(example.point_count, example.points.len());
+
+        let shape = IsoHull::from_lat_lon(
+            example
+                .points
+                .iter()
+                .map(|point| LatLon::new(point.lat, point.lon)),
+        )
+        .mode(isohull::HullMode::Subsample { max_points: 50000 })
+        .auto_alpha()
+        .min_area_ratio(0.005)
+        .build()?;
+        let svg = render_svg(&shape);
+
+        fs::write(output_dir.join(format!("{}.svg", file_stem(&path)?)), svg)?;
+    }
+
+    Ok(())
+}
+
+#[test]
+fn render_example_alpha_shapes_to_svg_100_000() -> Result<(), Box<dyn Error>> {
+    let input_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("data/examples");
+    let output_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/isohull/examples/100_000");
+
+    fs::create_dir_all(&output_dir)?;
+
+    for path in json_files(&input_dir)? {
+        let example = read_example(&path)?;
+        assert_eq!(example.point_count, example.points.len());
+
+        let shape = IsoHull::from_lat_lon(
+            example
+                .points
+                .iter()
+                .map(|point| LatLon::new(point.lat, point.lon)),
+        )
+        .mode(isohull::HullMode::Subsample { max_points: 100000 })
         .auto_alpha()
         .min_area_ratio(0.005)
         .build()?;

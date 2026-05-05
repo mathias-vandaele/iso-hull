@@ -67,10 +67,6 @@ pub(crate) fn signed_area(points: &[Point2]) -> f64 {
     area * 0.5
 }
 
-pub(crate) fn compare_points(a: Point2, b: Point2) -> std::cmp::Ordering {
-    a.x.total_cmp(&b.x).then_with(|| a.y.total_cmp(&b.y))
-}
-
 pub(crate) fn percentile_sorted(values: &[f64], percentile: f64) -> Option<f64> {
     if values.is_empty() {
         return None;
