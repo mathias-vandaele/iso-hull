@@ -4,7 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use isohull::{IsoHull, LatLon, MultiPolygon, Point2};
+use isohull::{GeoMultiPolygon, HullMode, IsoHull, LatLon, Point2};
 use serde::Deserialize;
 
 const SVG_WIDTH: f64 = 1200.0;
@@ -52,9 +52,9 @@ fn render_example_alpha_shapes_to_svg_exact() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
-fn render_example_alpha_shapes_to_svg_10_000() -> Result<(), Box<dyn Error>> {
+fn render_example_alpha_shapes_to_svg_low() -> Result<(), Box<dyn Error>> {
     let input_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("data/examples");
-    let output_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/isohull/examples/10_000");
+    let output_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/isohull/examples/low");
 
     fs::create_dir_all(&output_dir)?;
 
@@ -68,7 +68,7 @@ fn render_example_alpha_shapes_to_svg_10_000() -> Result<(), Box<dyn Error>> {
                 .iter()
                 .map(|point| LatLon::new(point.lat, point.lon)),
         )
-        .mode(isohull::HullMode::Subsample { max_points: 10000 })
+        .mode(HullMode::Low)
         .auto_alpha()
         .min_area_ratio(0.005)
         .build()?;
@@ -81,9 +81,9 @@ fn render_example_alpha_shapes_to_svg_10_000() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
-fn render_example_alpha_shapes_to_svg_50_000() -> Result<(), Box<dyn Error>> {
+fn render_example_alpha_shapes_to_svg_medium() -> Result<(), Box<dyn Error>> {
     let input_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("data/examples");
-    let output_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/isohull/examples/50_000");
+    let output_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/isohull/examples/medium");
 
     fs::create_dir_all(&output_dir)?;
 
@@ -97,7 +97,7 @@ fn render_example_alpha_shapes_to_svg_50_000() -> Result<(), Box<dyn Error>> {
                 .iter()
                 .map(|point| LatLon::new(point.lat, point.lon)),
         )
-        .mode(isohull::HullMode::Subsample { max_points: 50000 })
+        .mode(HullMode::Medium)
         .auto_alpha()
         .min_area_ratio(0.005)
         .build()?;
@@ -110,9 +110,9 @@ fn render_example_alpha_shapes_to_svg_50_000() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
-fn render_example_alpha_shapes_to_svg_100_000() -> Result<(), Box<dyn Error>> {
+fn render_example_alpha_shapes_to_svg_high() -> Result<(), Box<dyn Error>> {
     let input_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("data/examples");
-    let output_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/isohull/examples/100_000");
+    let output_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/isohull/examples/high");
 
     fs::create_dir_all(&output_dir)?;
 
@@ -126,7 +126,7 @@ fn render_example_alpha_shapes_to_svg_100_000() -> Result<(), Box<dyn Error>> {
                 .iter()
                 .map(|point| LatLon::new(point.lat, point.lon)),
         )
-        .mode(isohull::HullMode::Subsample { max_points: 100000 })
+        .mode(HullMode::High)
         .auto_alpha()
         .min_area_ratio(0.005)
         .build()?;
@@ -154,7 +154,7 @@ fn read_example(path: &Path) -> Result<Example, Box<dyn Error>> {
     Ok(serde_json::from_str(&contents)?)
 }
 
-fn render_svg(shape: &MultiPolygon) -> String {
+fn render_svg(shape: &GeoMultiPolygon) -> String {
     let bounds = Bounds::from_shape(shape);
     let projector = SvgProjector::new(bounds);
     let paths = shape
@@ -177,7 +177,7 @@ fn render_svg(shape: &MultiPolygon) -> String {
     )
 }
 
-fn path_data(points: &[Point2], projector: SvgProjector) -> String {
+fn path_data(points: &[LatLon], projector: SvgProjector) -> String {
     let mut data = String::new();
 
     for (index, point) in points.iter().enumerate() {
@@ -205,7 +205,7 @@ struct Bounds {
 }
 
 impl Bounds {
-    fn from_shape(shape: &MultiPolygon) -> Self {
+    fn from_shape(shape: &GeoMultiPolygon) -> Self {
         shape
             .polygons
             .iter()
@@ -218,10 +218,10 @@ impl Bounds {
                     max_y: f64::NEG_INFINITY,
                 },
                 |bounds, point| Self {
-                    min_x: bounds.min_x.min(point.x),
-                    min_y: bounds.min_y.min(point.y),
-                    max_x: bounds.max_x.max(point.x),
-                    max_y: bounds.max_y.max(point.y),
+                    min_x: bounds.min_x.min(point.lon),
+                    min_y: bounds.min_y.min(point.lat),
+                    max_x: bounds.max_x.max(point.lon),
+                    max_y: bounds.max_y.max(point.lat),
                 },
             )
     }
@@ -250,9 +250,9 @@ impl SvgProjector {
         Self { bounds, scale }
     }
 
-    fn point(self, point: Point2) -> Point2 {
-        let x = SVG_PADDING + (point.x - self.bounds.min_x) * self.scale;
-        let y = SVG_HEIGHT - SVG_PADDING - (point.y - self.bounds.min_y) * self.scale;
+    fn point(self, point: LatLon) -> Point2 {
+        let x = SVG_PADDING + (point.lon - self.bounds.min_x) * self.scale;
+        let y = SVG_HEIGHT - SVG_PADDING - (point.lat - self.bounds.min_y) * self.scale;
         Point2::new(x, y)
     }
 }

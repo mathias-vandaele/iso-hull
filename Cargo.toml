@@ -2,8 +2,20 @@
 name = "isohull"
 version = "0.1.0"
 edition = "2021"
+description = "Fast alpha-shape hulls for projected 2D and latitude/longitude point clouds"
+license = "MIT"
+repository = "https://github.com/mathias-vandaele/iso-hull"
+readme = "README.md"
+keywords = ["alpha-shape", "isoline", "isohull", "geometry", "geojson"]
+categories = ["algorithms", "science::geo"]
+exclude = ["/data", "/target", "/points.json"]
+
+[features]
+default = []
+geojson = ["dep:geojson"]
 
 [dependencies]
+geojson = { version = "0.24", optional = true }
 log = "0.4"
 rustc-hash = "2"
 spade = "2"

@@ -24,7 +24,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     init_logger();
 
     let input_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("data/examples");
-    let subsample_max_points = subsample_max_points()?;
+    let mode = hull_mode()?;
 
     for path in json_files(&input_dir)? {
         let example = read_example(&path)?;
@@ -43,8 +43,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .iter()
                 .map(|point| LatLon::new(point.lat, point.lon)),
         );
-        let builder = if let Some(max_points) = subsample_max_points {
-            builder.mode(HullMode::Subsample { max_points })
+        let builder = if let Some(mode) = mode {
+            builder.mode(mode)
         } else {
             builder
         };
@@ -62,12 +62,19 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn subsample_max_points() -> Result<Option<usize>, Box<dyn Error>> {
-    let Ok(value) = env::var("ISOHULL_SUBSAMPLE_MAX_POINTS") else {
+fn hull_mode() -> Result<Option<HullMode>, Box<dyn Error>> {
+    let Ok(value) = env::var("ISOHULL_MODE") else {
         return Ok(None);
     };
 
-    Ok(Some(value.parse()?))
+    match value.to_ascii_lowercase().as_str() {
+        "low" => Ok(Some(HullMode::Low)),
+        "medium" => Ok(Some(HullMode::Medium)),
+        "high" => Ok(Some(HullMode::High)),
+        "ultra" => Ok(Some(HullMode::Ultra)),
+        "exact" => Ok(Some(HullMode::Exact)),
+        _ => Err(format!("unknown ISOHULL_MODE: {value}").into()),
+    }
 }
 
 fn init_logger() {

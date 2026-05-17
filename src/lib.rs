@@ -11,9 +11,10 @@ mod types;
 pub use alpha::{alpha_shape, alpha_shape_auto, estimate_alpha_radius};
 pub use builder::{
     HullMode, IsoHull, IsoHullAreaBuilder, IsoHullBuildBuilder, IsoHullInputBuilder,
+    IsoHullLatLonAreaBuilder, IsoHullLatLonBuildBuilder, IsoHullLatLonInputBuilder,
 };
 pub use error::{AlphaShapeError, IsoHullError};
-pub use types::{LatLon, MultiPolygon, Point2, Polygon};
+pub use types::{GeoMultiPolygon, GeoPolygon, LatLon, MultiPolygon, Point2, Polygon};
 
 #[cfg(test)]
 mod tests {
@@ -80,12 +81,42 @@ mod tests {
         }
 
         let shape = IsoHull::from_xy(points)
-            .mode(HullMode::Subsample { max_points: 10_000 })
+            .mode(HullMode::Low)
             .auto_alpha()
             .all_area()
             .build()
             .unwrap();
 
         assert_eq!(shape.polygons.len(), 1);
+    }
+
+    #[cfg(feature = "geojson")]
+    #[test]
+    fn lat_lon_builder_exports_geojson() {
+        let points = vec![
+            LatLon::new(50.0, 3.0),
+            LatLon::new(50.0, 3.01),
+            LatLon::new(50.01, 3.01),
+            LatLon::new(50.01, 3.0),
+        ];
+
+        let shape = IsoHull::from_lat_lon(points)
+            .auto_alpha()
+            .all_area()
+            .build()
+            .unwrap();
+        let geojson = shape.to_geojson();
+
+        let geojson::GeoJson::Geometry(geometry) = geojson else {
+            panic!("expected GeoJSON geometry");
+        };
+        let geojson::Value::MultiPolygon(coordinates) = geometry.value else {
+            panic!("expected GeoJSON multipolygon");
+        };
+
+        assert_eq!(coordinates.len(), 1);
+        assert_eq!(coordinates[0].len(), 1);
+        assert!((coordinates[0][0][0][0] - 3.0).abs() < 1.0e-9);
+        assert!((coordinates[0][0][0][1] - 50.0).abs() < 1.0e-9);
     }
 }

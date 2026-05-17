@@ -55,3 +55,34 @@ pub struct Polygon {
 pub struct MultiPolygon {
     pub polygons: Vec<Polygon>,
 }
+
+#[derive(Debug, Clone)]
+pub struct GeoPolygon {
+    pub outer: Vec<LatLon>,
+}
+
+#[derive(Debug, Clone)]
+pub struct GeoMultiPolygon {
+    pub polygons: Vec<GeoPolygon>,
+}
+
+#[cfg(feature = "geojson")]
+impl GeoMultiPolygon {
+    pub fn to_geojson(&self) -> geojson::GeoJson {
+        let coordinates = self
+            .polygons
+            .iter()
+            .map(|polygon| {
+                vec![polygon
+                    .outer
+                    .iter()
+                    .map(|point| vec![point.lon, point.lat])
+                    .collect()]
+            })
+            .collect();
+
+        geojson::GeoJson::Geometry(geojson::Geometry::new(geojson::Value::MultiPolygon(
+            coordinates,
+        )))
+    }
+}

@@ -5,7 +5,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
     error::AlphaShapeError,
-    types::{LatLon, Point2},
+    types::{GeoMultiPolygon, GeoPolygon, LatLon, MultiPolygon, Point2},
 };
 
 const EARTH_RADIUS_METERS: f64 = 6_371_000.0;
@@ -133,23 +133,19 @@ pub(crate) fn spatial_subsample(points: &[Point2], max_points: usize) -> Vec<Poi
     output
 }
 
-pub(crate) fn project_lat_lon(points: &[LatLon]) -> Vec<Point2> {
+pub(crate) fn project_lat_lon(points: &[LatLon]) -> ProjectedLatLon {
     let started = Instant::now();
 
-    let Some(origin) = points.first().copied() else {
-        return Vec::new();
+    let Some(projection) = LatLonProjection::from_points(points) else {
+        return ProjectedLatLon {
+            points: Vec::new(),
+            projection: None,
+        };
     };
-
-    let mean_latitude = points.iter().map(|point| point.lat).sum::<f64>() / points.len() as f64;
-    let longitude_scale = mean_latitude.to_radians().cos();
 
     let projected = points
         .iter()
-        .map(|point| {
-            let x = (point.lon - origin.lon).to_radians() * EARTH_RADIUS_METERS * longitude_scale;
-            let y = (point.lat - origin.lat).to_radians() * EARTH_RADIUS_METERS;
-            Point2::new(x, y)
-        })
+        .map(|point| projection.project(*point))
         .collect::<Vec<_>>();
 
     trace!(
@@ -160,7 +156,69 @@ pub(crate) fn project_lat_lon(points: &[LatLon]) -> Vec<Point2> {
         started.elapsed().as_secs_f64() * 1000.0
     );
 
-    projected
+    ProjectedLatLon {
+        points: projected,
+        projection: Some(projection),
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ProjectedLatLon {
+    pub(crate) points: Vec<Point2>,
+    pub(crate) projection: Option<LatLonProjection>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct LatLonProjection {
+    origin: LatLon,
+    longitude_scale: f64,
+}
+
+impl LatLonProjection {
+    fn from_points(points: &[LatLon]) -> Option<Self> {
+        let origin = points.first().copied()?;
+        let mean_latitude = points.iter().map(|point| point.lat).sum::<f64>() / points.len() as f64;
+
+        Some(Self {
+            origin,
+            longitude_scale: mean_latitude.to_radians().cos(),
+        })
+    }
+
+    fn project(self, point: LatLon) -> Point2 {
+        let x =
+            (point.lon - self.origin.lon).to_radians() * EARTH_RADIUS_METERS * self.longitude_scale;
+        let y = (point.lat - self.origin.lat).to_radians() * EARTH_RADIUS_METERS;
+
+        Point2::new(x, y)
+    }
+
+    pub(crate) fn unproject_multi_polygon(self, shape: MultiPolygon) -> GeoMultiPolygon {
+        let polygons = shape
+            .polygons
+            .into_iter()
+            .map(|polygon| GeoPolygon {
+                outer: polygon
+                    .outer
+                    .into_iter()
+                    .map(|point| self.unproject(point))
+                    .collect(),
+            })
+            .collect();
+
+        GeoMultiPolygon { polygons }
+    }
+
+    fn unproject(self, point: Point2) -> LatLon {
+        let lat = self.origin.lat + (point.y / EARTH_RADIUS_METERS).to_degrees();
+        let lon = if self.longitude_scale.abs() > f64::EPSILON {
+            self.origin.lon + (point.x / (EARTH_RADIUS_METERS * self.longitude_scale)).to_degrees()
+        } else {
+            self.origin.lon
+        };
+
+        LatLon::new(lat, lon)
+    }
 }
 
 fn push_extreme(
