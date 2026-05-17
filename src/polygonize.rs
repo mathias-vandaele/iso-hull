@@ -312,7 +312,8 @@ fn rings_to_polygons(rings: Vec<Vec<Point2>>) -> Vec<Polygon> {
 
     let mut keep = Vec::with_capacity(rings.len());
     for index in 0..rings.len() {
-        keep.push(containment_depth(index, &rings) % 2 == 0);
+        let depth = containment_depth(index, &rings);
+        keep.push(depth & 1 == 0);
     }
 
     let mut polygons = Vec::with_capacity(rings.len());

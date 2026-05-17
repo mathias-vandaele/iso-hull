@@ -13,19 +13,14 @@ use crate::{
     types::{GeoMultiPolygon, LatLon, MultiPolygon, Point2, Polygon},
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum HullMode {
     Low,
     Medium,
     High,
     Ultra,
+    #[default]
     Exact,
-}
-
-impl Default for HullMode {
-    fn default() -> Self {
-        Self::Exact
-    }
 }
 
 pub struct IsoHull;
