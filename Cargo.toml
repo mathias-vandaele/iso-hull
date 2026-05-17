@@ -1,6 +1,6 @@
 [package]
 name = "isohull"
-version = "0.0.1"
+version = "0.1.0"
 edition = "2021"
 description = "Fast alpha-shape hulls for projected 2D and latitude/longitude point clouds"
 license = "MIT"
