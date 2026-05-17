@@ -35,7 +35,7 @@ rm Cargo.toml.bak
 echo "Post-version checks..."
 cargo check --all-features
 cargo test --all-features
-cargo publish --locked --dry-run
+cargo publish --locked --dry-run --allow-dirty
 
 git add Cargo.toml Cargo.lock
 git commit -m "Release v$VERSION"
